@@ -250,6 +250,60 @@ top_10_negative <- tail(corr_with_price_sorted, 10)
 positive_df <- data.frame(Variable = names(top_10_positive), Correlation = top_10_positive)
 negative_df <- data.frame(Variable = names(top_10_negative), Correlation = top_10_negative)
 
+positive_df
+negative_df
+
+# Create a mapping of old names to new names
+# Create a refined mapping of variable names
+name_mapping <- c(
+  # Council Tax Bands
+  "band_g_council_tax" = "Council Tax Band G",
+  "band_h_council_tax" = "Council Tax Band H",
+  "band_f_council_tax" = "Council Tax Band F",
+  "band_e_council_tax" = "Council Tax Band E",
+  "band_c_council_tax" = "Council Tax Band C",
+  "band_b_council_tax" = "Council Tax Band B",
+  "band_a_council_tax" = "Council Tax Band A",
+
+  # Hospitals
+  "HospPT45n_tt_hospitals" = "Hospitals within 45 min by PT/Walk",
+  "HospPT30n_tt_hospitals" = "Hospitals within 30 min by PT/Walk",
+  "HospPT60n_tt_hospitals" = "Hospitals within 60 min by PT/Walk",
+  "HospCyc45n_tt_hospitals" = "Hospitals within 45 min by Cycle",
+  "HospCyc30n_tt_hospitals" = "Hospitals within 30 min by Cycle",
+
+  # % Users within X Minutes for Hospitals
+  "HospPT45pct_tt_hospitals" = "% users within 45 min of Hospitals by PT/Walk",
+  "HospCyc15pct_tt_hospitals" = "% users within 15 min of Hospitals by Cycle",
+
+  # Employment Centres (<500 jobs)
+  "500EmpPT15n_tt_emp_centres" = "Jobs <500 within 15 min by PT/Walk",
+  "100EmpPT45n_tt_emp_centres" = "Jobs <500 within 45 min by PT/Walk",
+
+  # % Users within X Minutes for Jobs (100-499 jobs)
+  "100EmpPT30pct_tt_emp_centres" = "% users within 30 min of Jobs 100-499 by PT/Walk",
+  "100EmpCyc15pct_tt_emp_centres" = "% users within 15 min of Jobs 100-499 by Cycle",
+  "100EmpPT15pct_tt_emp_centres" = "% users within 15 min of Jobs 100-499 by PT/Walk",
+
+  # Schools
+  "SSCyc15pct_tt_sec_schools" = "% users within 15 min of Schools by Cycle",
+  "SSPT45pct_tt_sec_schools" = "% users within 45 min of Schools by PT/Walk",
+  "SSPT30pct_tt_sec_schools" = "% users within 30 min of Schools by PT/Walk"
+)
+
+
+# Replace names in positive_df and negative_df
+positive_df$Variable <- name_mapping[positive_df$Variable]
+negative_df$Variable <- name_mapping[negative_df$Variable]
+
+# Check the updated data frames
+print(positive_df)
+print(negative_df)
+
+
+
+
+
 # Plot top 10 positive correlations 
 positive_plot <- ggplot(positive_df, aes(x = reorder(Variable, Correlation), y = Correlation)) +
   geom_bar(stat = "identity", fill = "blue") +
@@ -276,6 +330,7 @@ negative_plot <- ggplot(negative_df, aes(x = reorder(Variable, Correlation), y =
 
 positive_plot
 negative_plot
+
 
 # Define file paths for saving the plots
 positive_plot_path <- "C:/Bruno/Postulaciones/Postulaciones GE/Frontier Economics/Junior Data Scientist/Data/positive_correlations_plot.png"
