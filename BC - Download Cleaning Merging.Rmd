@@ -1,0 +1,774 @@
+---
+title: 'Frontier Economics: Interview task'
+author: 'Author: Bruno Chereque'
+date: "18/12/24"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE, echo=FALSE, message = FALSE, warning = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+if (!require("tidyverse")) install.packages("tidyverse") 
+library(tidyverse)
+
+if (!require("readxl")) install.packages("readxl")
+library(readxl)
+
+if (!require("readODS")) install.packages("readODS")
+library(readODS)
+
+if (!require("httr")) install.packages("httr")
+library(httr)
+
+if (!require("sf")) install.packages("sf")
+library(sf)
+
+if (!require("tmap")) install.packages("tmap")
+library(tmap)
+
+if (!require("tmaptools")) install.packages("tmaptools")
+library(tmaptools)
+
+if (!require("biscale")) install.packages("biscale")
+library(biscale)
+```
+
+# Loading, cleaning and mergings datasets:
+
+This analysis will examine the determinants of residential property prices in England and Wales. To achieve this, we will first develop a dataset from with four key relevant variables/group of variables: median residential property prices, data related to council tax and property characteristics, estimated travel times (by mode of transport), and school characteristics.
+
+Since we rely on multiple sources to create a unified dataset for subsequent analysis, we face a data inconsistency challenge across sources and years. To address this, the common period of analysis for this study will be from 2014 to 2017. However, all available price data will be included to generate descriptive statistics later on.
+
+## Loading datasets
+
+1)  We are downloading the data for the median price paid for residential property in England and Wales at the Lower Layer Super Output Area (LSOA) from the ONS. We will call it "me_prices_properties".
+
+```{r loading datasets me_prices_properties, warning=FALSE, message=FALSE}
+
+# Load Median house prices by lower layer super output area: HPSSA dataset 46 (Source: ONS) 
+
+# Define the URL (direct link to download the data) and destination folder (working directory)
+url <- "https://www.ons.gov.uk/file?uri=/peoplepopulationandcommunity/housing/datasets/medianpricepaidbylowerlayersuperoutputareahpssadataset46/current/hpssadataset46medianpricepaidforresidentialpropertiesbylsoa.zip"
+
+destination_folder <- "C:/Bruno/Postulaciones/Postulaciones GE/Frontier Economics/Junior Data Scientist/Data" #This will be needed to change to the personal directory of the user, The folder is called "Data", and we will save all the dataframes here.
+
+# Define the zip and excel files with the correct names
+zip_file <- file.path(destination_folder, "/hpssadataset46medianpricepaidforresidentialpropertiesbylsoa.zip")
+
+excel_file <- file.path(destination_folder, "/HPSSA Dataset 46 - Median price paid for residential properties by LSOA.xls")
+
+# Create the folder if it doesn't exist
+if (!dir.exists(destination_folder)) {
+  dir.create(destination_folder, recursive = TRUE)
+}
+
+# Download the ZIP file from the ONS website
+download.file(url, zip_file, mode = "wb")
+
+# Unzip the folder in the "Data" folder
+unzip(zip_file, exdir = destination_folder)
+
+# Load the specific sheet ("1a") from the Excel file. "1a" contains the median price paid for residential properties by LSOA, England and Wales, year ending Dec 1995 to year ending Mar 2023
+me_prices_properties <- read_excel(excel_file, sheet = "1a", skip=4)
+
+```
+
+2)  We are downloading information about council tax band and LSOA from the Valuation Office Agency. We are excluding information for property types (CTSOP 3.1) and property build period (CTSOP 4.1) due to time restriction.  We will only focus on the period 2014-2017. We will call our dataset "council_tax".
+
+```{r loading datasets CTSOP 1.1, warning=FALSE, message=FALSE}
+
+# Load number of properties by council tax band (source: Valuation Office Agency)
+
+# Define the URL and destination folder
+url <- "https://assets.publishing.service.gov.uk/media/64871b9c103ca60013039d4a/CTSOP1-1-1993-2023.zip"
+
+destination_folder <- "C:/Bruno/Postulaciones/Postulaciones GE/Frontier Economics/Junior Data Scientist/Data" #This destination folder would need to be changed by the user
+
+# Define the zip and excel files with the correct names
+zip_file <- file.path(destination_folder, "/CTSOP1-1-1993-2023.zip")
+
+
+# Download the ZIP file from the ONS website
+download.file(url, zip_file, mode = "wb")
+
+# Unzip the folder in the "Data" folder
+unzip(zip_file, exdir = destination_folder)
+
+# List all CSV files in the unzipped folder
+csv_files <- list.files(destination_folder, pattern = "CTSOP1_1_\\d{4}_03_31\\.csv", full.names = TRUE)
+
+# Initialize an empty data frame for the combined dataset
+council_tax <- data.frame()
+
+# Loop through each CSV file
+for (file in csv_files) {
+  # Extract the year from the file name
+  year <- as.numeric(str_extract(file, "\\d{4}"))
+  
+  # Filter files only from 2014 to 2017
+  if (year >= 2014 && year <= 2017) {
+    # Read the CSV file
+    data <- read_csv(file, col_types = cols(.default = "c")) %>% # Read all columns as characters
+      mutate(
+        year = year,                     # Add the year column
+        all_properties = as.numeric(all_properties) # Ensure geography is always character
+      )
+    
+    # Append to the combined dataset
+    council_tax <- bind_rows(council_tax, data)
+  }
+}
+
+```
+
+3)  We are downloading Journey Times to Key Services by lower super output areas (JTS05) from the Department of transport. We will only focus on the period 2014-2017 and on three dataframes i) travel time to employment centres (tt_emp_centres), ii) travel time to secondary schools (tt_sec_schools), iii) travel time to hospitals (tt_hospitals).
+
+```{r loading datasets travel time employment centres, warning=FALSE, message=FALSE}
+
+# Load time travel data to employment centres (Source: Department of Transport) 
+
+# Define the URL and destination folder
+url <- "https://assets.publishing.service.gov.uk/media/61efd12de90e070372b3aa4d/jts0501.ods"
+
+destination_folder <- "C:/Bruno/Postulaciones/Postulaciones GE/Frontier Economics/Junior Data Scientist/Data"
+
+# Define the ODS file path
+ods_file <- file.path(destination_folder, "jts0501.ods")
+
+# Create the folder if it doesn't exist
+if (!dir.exists(destination_folder)) {
+  dir.create(destination_folder, recursive = TRUE)
+}
+
+# Download the ODS file
+if (!file.exists(ods_file)) {
+  download.file(url, ods_file, mode = "wb")
+}
+
+# Initialize an empty list to store datasets
+datasets <- list()
+
+# Loop through the years and process each sheet
+for (year in 2014:2017) {
+  # Read the sheet for the current year
+  data <- read_ods(ods_file, sheet = as.character(year), skip = 6)
+  
+  # Add a year column
+  data <- data %>%
+    mutate(year = year)
+  
+  # Append the dataset to the list
+  datasets[[as.character(year)]] <- data
+}
+
+# Combine all datasets into a single data frame
+tt_emp_centres <- bind_rows(datasets)
+
+# Glimpse the final dataset
+glimpse(tt_emp_centres)
+
+```
+
+```{r loading datasets travel time secondary schools, warning=FALSE, message=FALSE}
+
+# Load time travel data to secondary schools (Source: Department of transport) 
+
+# Define the URL and destination folder
+url <- "https://assets.publishing.service.gov.uk/media/6182b792e90e07197d8fb957/jts0503.ods"
+
+destination_folder <- "C:/Bruno/Postulaciones/Postulaciones GE/Frontier Economics/Junior Data Scientist/Data"
+
+# Define the ODS file path
+ods_file <- file.path(destination_folder, "jts0503.ods")
+
+# Create the folder if it doesn't exist
+if (!dir.exists(destination_folder)) {
+  dir.create(destination_folder, recursive = TRUE)
+}
+
+# Download the ODS file
+if (!file.exists(ods_file)) {
+  download.file(url, ods_file, mode = "wb")
+}
+
+# Initialize an empty list to store datasets
+datasets <- list()
+
+# Loop through the years and process each sheet
+for (year in 2014:2017) {
+  # Read the sheet for the current year
+  data <- read_ods(ods_file, sheet = as.character(year), skip = 6)
+  
+  # Add a year column
+  data <- data %>%
+    mutate(year = year)
+  
+  # Append the dataset to the list
+  datasets[[as.character(year)]] <- data
+}
+
+# Combine all datasets into a single data frame
+tt_sec_schools <- bind_rows(datasets)
+
+# Glimpse the final dataset
+glimpse(tt_sec_schools)
+
+```
+
+```{r loading datasets travel time hospitals, warning=FALSE, message=FALSE}
+
+# Load time travel data to secondary schools (Source: Department of transport) 
+
+# Define the URL and destination folder
+url <- "https://assets.publishing.service.gov.uk/media/6182b8f1d3bf7f5605904253/jts0506.ods"
+
+destination_folder <- "C:/Bruno/Postulaciones/Postulaciones GE/Frontier Economics/Junior Data Scientist/Data"
+
+# Define the ODS file path
+ods_file <- file.path(destination_folder, "jts0506.ods")
+
+# Create the folder if it doesn't exist
+if (!dir.exists(destination_folder)) {
+  dir.create(destination_folder, recursive = TRUE)
+}
+
+# Download the ODS file
+if (!file.exists(ods_file)) {
+  download.file(url, ods_file, mode = "wb")
+}
+
+# Initialize an empty list to store datasets
+datasets <- list()
+
+# Loop through the years and process each sheet
+for (year in 2014:2017) {
+  # Set the `skip` value based on the year
+  skip_value <- case_when(
+    year == 2014 ~ 6,
+    year == 2015 ~ 6,
+    year == 2016 ~ 8,
+    year == 2017 ~ 7
+  )
+  
+  # Read the sheet for the current year with the correct `skip` value
+  data <- read_ods(ods_file, sheet = as.character(year), skip = skip_value)
+  
+  # Add a year column
+  data <- data %>%
+    mutate(year = year)
+  
+  # Append the dataset to the list
+  datasets[[as.character(year)]] <- data
+}
+
+# Combine all datasets into a single data frame
+tt_hospitals <- bind_rows(datasets)
+
+# Glimpse the final dataset
+glimpse(tt_hospitals)
+
+```
+
+4)  Finally, we are including school quality data at the postcode level for the years 2014-2017. When downloading data we are choosing one data type Spine (general school information) due to time restrictions. We are merging this dataset at the post code level with a look up table to get the LSOA code for each school.
+
+This download process of these dataframes is not automatised because this source use dynamic characteristics to name downloadable information. I downloaded directly the folders and upload them to R. I also downloaded manually the lookup excel from post code to LAs.
+
+```{r loading datasets school quality data, warning=FALSE, message=FALSE}
+
+# Define the years and file paths
+years <- 2014:2017
+file_paths <- paste0("C:/Bruno/Postulaciones/Postulaciones GE/Frontier Economics/Junior Data Scientist/Data/", years, "-", years + 1, "/england_spine.csv")
+
+# Initialize an empty list to store data
+england_spine_list <- list()
+
+# Loop through years and file paths
+for (i in seq_along(years)) {
+  # Read the CSV file
+  temp_data <- read_csv(file_paths[i])
+  
+  # Add a year column
+  temp_data <- temp_data %>%
+    mutate(year = years[i])
+  
+  # Append the data to the list
+  england_spine_list[[i]] <- temp_data
+}
+
+# Combine all data into a single dataframe
+england_spine_combined <- bind_rows(england_spine_list)
+
+# View the combined dataframe
+print(england_spine_combined)
+
+
+glimpse(england_spine_combined)
+
+
+lookup_table <- read_csv("C:/Bruno/Postulaciones/Postulaciones GE/Frontier Economics/Junior Data Scientist/Data/PCD_OA_LSOA_MSOA_LAD_FEB22_UK_LU.csv")
+glimpse(lookup_table)
+
+
+# Ensure consistent formatting of postcodes (remove leading and trailing white spaces)
+england_spine_combined <- england_spine_combined %>%
+  mutate(POSTCODE = trimws(POSTCODE))
+
+lookup_table <- lookup_table %>%
+  mutate(pcds = trimws(pcds))
+
+# Perform the join and create an indicator for matching
+england_spine_with_lsoa <- england_spine_combined %>%
+  left_join(lookup_table %>% select(pcds, lsoa11cd), by = c("POSTCODE" = "pcds")) %>%
+  mutate(
+    match_type = case_when(
+      !is.na(lsoa11cd) ~ "Matched",
+      is.na(lsoa11cd) & !is.na(POSTCODE) ~ "Left only",
+      TRUE ~ "Other"
+    )
+  )
+
+# Summarize the match results (103,225 schools properly matched, aparently only one school did not match)
+match_summary <- england_spine_with_lsoa %>%
+  count(match_type)
+
+# Print the match summary
+print(match_summary)
+
+head(england_spine_with_lsoa)
+
+
+```
+
+
+## Cleaning datasets
+
+### Median price for residential properties
+
+Here we clean the dataframe. First, we change ":" to properly NA values to convert variable to numeric Then we reshape the data to have the information in a tidy format.
+
+```{r cleaning median price properties , warning=FALSE, message=FALSE}
+
+# Look for data set structure and variables
+glimpse(me_prices_properties)
+
+# Convert price columns to numeric, replacing ":" and other non-numeric values with NA
+me_prices_properties_cleaned <- me_prices_properties %>%
+  mutate(across(`Year ending Dec 1995`:`Year ending Mar 2023`, 
+                ~ as.numeric(gsub(":", NA, .))))
+
+# We will need to reshape the data to a tidy format for further analysis, but before doing that we will rename the columns to facilitate our reshape exercise to a long format
+me_prices_properties_cleaned <- me_prices_properties_cleaned %>%
+  rename_with(~ gsub("Year ending ", "", .), starts_with("Year ending"))
+
+# Reshape the data into long format
+me_prices_properties_long <- me_prices_properties_cleaned %>%
+  pivot_longer(
+    cols = `Dec 1995`:`Mar 2023`, # Updated to reflect column names with spaces
+    names_to = "month_year",      # Combine month and year into one column
+    values_to = "median_price"    # Values go into this column
+  ) %>%
+  # Separate the "month_year" column into "month" and "year"
+  separate(month_year, into = c("month", "year"), sep = " ") %>%
+  # Convert year to numeric for easier processing
+  mutate(year = as.numeric(year)) %>%
+  arrange(`Local authority code`, `LSOA code`, year, month)
+
+# Collapse month data to yearly averages per local authority
+yearly_median_prices <- me_prices_properties_long %>%
+  group_by(`Local authority code`, `Local authority name`, `LSOA code`, `LSOA name`, year) %>%
+  summarize(
+    mean_price = mean(median_price, na.rm = TRUE), # Calculate yearly mean price
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+# Preview the new dataset
+glimpse(yearly_median_prices)
+
+
+```
+### Number of properties by council tax
+
+We look for missing observations, convert variables to their correct type, check for duplicates and add suffix for later identification with the correct dataset.
+
+```{r cleaning council tax property type , warning=FALSE, message=FALSE}
+
+# Look for data set structure and variables
+glimpse(council_tax)
+
+# Clean the dataset
+council_tax <- council_tax %>%
+  # Step 1: Replace non-numeric values ("..", "-") with NA
+  mutate(across(
+    c(band_a:band_h), 
+    ~ na_if(str_trim(.), "..") %>% na_if("-")
+  ))
+
+# Step 2: Convert numeric-like columns to numeric
+council_tax <- council_tax %>%   
+  mutate(across(
+    c(band_a:band_h), 
+    as.numeric
+  )) 
+
+head(council_tax)
+
+# Summarize missing values
+missing_summary <- council_tax %>%
+  summarise(across(everything(), ~ sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "missing_count") %>%
+  arrange(desc(missing_count))
+
+# Print the summary of missing values
+print(missing_summary) # Lots of missings specially in lower council tax bands, we may resitric the analyis for the first five bands
+
+# Step 3: Check for duplicates (no duplicates)
+duplicates <- council_tax %>% filter(duplicated(.))
+print(duplicates)
+
+# Add suffix "_tt_emp_centres" to all column names to identify variables with the dataset
+council_tax <- council_tax %>%
+  rename_with(~ paste0(., "_council_tax"))
+
+glimpse(council_tax)
+
+```
+
+### Transport data
+
+Looking for missings, duplicates and renaming variables.
+
+```{r transport employment centres, warning=FALSE, message=FALSE}
+
+# View the resulting dataset
+glimpse(tt_emp_centres)
+
+
+# Summarize missing values
+missing_summary <- tt_emp_centres %>%
+  summarise(across(everything(), ~ sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "missing_count") %>%
+  arrange(desc(missing_count))
+
+# Print the summary of missing values
+print(missing_summary) # No missings, great!
+
+# Step 3: Check for duplicates (no duplicates, great!)
+duplicates <- tt_emp_centres %>% filter(duplicated(.))
+print(duplicates)
+
+# Add suffix "_tt_emp_centres" to all column names to identify variables with the dataset
+tt_emp_centres <- tt_emp_centres %>%
+  rename_with(~ paste0(., "_tt_emp_centres"))
+
+# View the updated dataset structure
+glimpse(tt_emp_centres)
+
+```
+
+```{r transport secondary schools, warning=FALSE, message=FALSE}
+
+# View the resulting dataset
+glimpse(tt_sec_schools)
+
+# Summarize missing values
+missing_summary <- tt_sec_schools %>%
+  summarise(across(everything(), ~ sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "missing_count") %>%
+  arrange(desc(missing_count))
+
+# Print the summary of missing values
+print(missing_summary) # No missings, great!
+
+# Step 3: Check for duplicates (no duplicates, great!)
+duplicates <- tt_sec_schools %>% filter(duplicated(.))
+print(duplicates)
+
+# Add suffix "_tt_sec_schools" to all column names to identify variables with the dataset
+tt_sec_schools <- tt_sec_schools %>%
+  rename_with(~ paste0(., "_tt_sec_schools"))
+
+# View the updated dataset structure
+glimpse(tt_sec_schools)
+
+```
+
+```{r transport hospitals, warning=FALSE, message=FALSE}
+
+# View the resulting dataset
+glimpse(tt_hospitals)
+
+# Summarize missing values
+missing_summary <- tt_hospitals %>%
+  summarise(across(everything(), ~ sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "missing_count") %>%
+  arrange(desc(missing_count))
+
+# Print the summary of missing values
+print(missing_summary) # No missings, great!
+
+# Step 3: Check for duplicates (no duplicates, great!)
+duplicates <- tt_hospitals %>% filter(duplicated(.))
+print(duplicates)
+
+# Add suffix "_tt_hospitals" to all column names to identify variables with the dataset
+tt_hospitals <- tt_hospitals %>%
+  rename_with(~ paste0(., "_tt_hospitals"))
+
+# View the updated dataset structure
+glimpse(tt_hospitals)
+
+```
+### Schools related data
+
+Here we clean the dataframe. Variables types are correct, here I just aggregate the available information at the LSOA level for later analysis.
+
+```{r cleaning schools related data  , warning=FALSE, message=FALSE}
+
+
+# View the resulting dataset
+glimpse(england_spine_with_lsoa)
+
+# Here we aggregate school data from post codes to the LSOA level
+school_lsoa <- england_spine_with_lsoa %>%
+  group_by(lsoa11cd, year) %>%
+  summarise(
+    num_schools = n(),
+    num_primary_schools = sum(ISPRIMARY == 1, na.rm = TRUE),
+    num_secondary_schools = sum(ISSECONDARY == 1, na.rm = TRUE),
+    num_post16_schools = sum(ISPOST16 == 1, na.rm = TRUE),
+    avg_lower_age = mean(AGEL, na.rm = TRUE),
+    avg_upper_age = mean(AGEH, na.rm = TRUE),
+    range_age = avg_upper_age - avg_lower_age,
+    num_mixed_gender = sum(GENDER == "Mixed", na.rm = TRUE),
+    num_girls_only = sum(GENDER == "Girls", na.rm = TRUE),
+    num_boys_only = sum(GENDER == "Boys", na.rm = TRUE),
+    num_religious_schools = sum(RELDENOM != "None", na.rm = TRUE),
+    num_maintained_schools = sum(MINORGROUP == "Maintained School", na.rm = TRUE),
+    num_independent_schools = sum(MINORGROUP == "Independent School", na.rm = TRUE) #
+  )
+
+glimpse(school_lsoa)
+
+# Check for duplicates in the dataset
+duplicates <- school_lsoa %>%
+  group_by(lsoa11cd, year) %>%
+  filter(n() > 1)
+
+# View the duplicates: Great, no duplicates
+print(duplicates)
+
+# What about NAs?
+colSums(is.na(school_lsoa)) #We only have that school missing, let's just drop it
+
+# Drop rows with missing values in lsoa11cd
+school_lsoa <- school_lsoa %>%
+  filter(!is.na(lsoa11cd))
+
+# Add suffix "_school_lsoa" to all column names to correctly identify variables with datasets later on
+school_lsoa <- school_lsoa %>%
+  rename_with(~ paste0(., "_school_lsoa"))
+
+# View the updated dataset structure
+glimpse(school_lsoa)
+
+```
+
+## Merging datasets
+
+### Median price and council tax
+
+```{r merging median price and council tax  , warning=FALSE, message=FALSE}
+
+glimpse(yearly_median_prices)
+
+glimpse(council_tax)
+
+# Perform the left join
+p_ctax <- yearly_median_prices %>%
+  left_join(
+    council_tax, 
+    by = c("LSOA code" = "ecode_council_tax", "year" = "year_council_tax")
+  ) %>%
+  mutate(
+    merge_1 = case_when(
+      is.na(geography_council_tax) ~ 1,  # Left side only (no match found on the right)
+      is.na(`Local authority code`) ~ 2, # Right side only (shouldn't occur in left join)
+      TRUE ~ 3                          # Match found
+    )
+  )
+
+# Count observations for each merge category (134588 obs from 173248 in council_tax merged where properly merged)
+merge_1_summary <- p_ctax %>%
+  count(merge_1)
+
+# Print the merge summary
+print(merge_1_summary)
+
+# View the merged data
+glimpse(p_ctax)
+
+# Filter for the specific years and glimpse the result
+p_ctax_filtered <- p_ctax %>%
+  filter(year %in% c(2014, 2015, 2016, 2017))
+
+glimpse(p_ctax_filtered)
+
+
+```
+
+```{r merging p_ctax and tt_emp_centres  , warning=FALSE, message=FALSE}
+
+glimpse(p_ctax)
+
+glimpse(tt_emp_centres)
+
+# Perform the left join
+p_ctax_emp <- p_ctax %>%
+  left_join(
+    tt_emp_centres, 
+    by = c("LSOA code" = "LSOA_code_tt_emp_centres", "year" = "year_tt_emp_centres")
+  ) %>%
+  mutate(
+    merge_2 = case_when(
+      is.na(Region_tt_emp_centres) ~ 1,  # Left side only (no match found on the right)
+      is.na(`Local authority code`) ~ 2, # Right side only (shouldn't occur in left join)
+      TRUE ~ 3                          # Match found
+    )
+  )
+
+# Count observations for each merge category (131376 matched, all variables from tt_emp_centres merged properly)
+merge_2_summary <- p_ctax_emp %>%
+  count(merge_2)
+
+# Print the merge summary
+print(merge_2_summary)
+
+# View the merged data
+glimpse(p_ctax_emp)
+
+```
+
+```{r merging p_ctax_emp and tt_sec_schools  , warning=FALSE, message=FALSE}
+
+glimpse(p_ctax_emp)
+
+glimpse(tt_sec_schools)
+
+# Perform the left join
+p_ctax_emp_schools <- p_ctax_emp %>%
+  left_join(
+    tt_sec_schools, 
+    by = c("LSOA code" = "LSOA_code_tt_sec_schools", "year" = "year_tt_sec_schools")
+  ) %>%
+  mutate(
+    merge_3 = case_when(
+      is.na(Region_tt_sec_schools) ~ 1,  # Left side only (no match found on the right)
+      is.na(`Local authority code`) ~ 2, # Right side only (shouldn't occur in left join)
+      TRUE ~ 3                          # Match found
+    )
+  )
+
+# Count observations for each merge category (131,376, all variables from tt_sec_schools merged properly)
+merge_3_summary <- p_ctax_emp_schools %>%
+  count(merge_3)
+
+# Print the merge summary
+print(merge_3_summary)
+
+# View the merged data
+glimpse(p_ctax_emp_schools)
+
+```
+
+```{r merging p_ctax_emp_schools and tt_hospitals  , warning=FALSE, message=FALSE}
+
+glimpse(p_ctax_emp_schools)
+
+glimpse(tt_hospitals)
+
+# Perform the left join
+p_ctax_emp_schools_hospitals <- p_ctax_emp_schools %>%
+  left_join(
+    tt_hospitals, 
+    by = c("LSOA code" = "LSOA_code_tt_hospitals", "year" = "year_tt_hospitals")
+  ) %>%
+  mutate(
+    merge_4 = case_when(
+      is.na(Region_tt_hospitals) ~ 1,  # Left side only (no match found on the right)
+      is.na(`Local authority code`) ~ 2, # Right side only (shouldn't occur in left join)
+      TRUE ~ 3                          # Match found
+    )
+  )
+
+# Count observations for each merge category (131,376, all variables from tt_hospitals merged properly)
+merge_4_summary <- p_ctax_emp_schools_hospitals %>%
+  count(merge_4)
+
+# Print the merge summary
+print(merge_4_summary)
+
+# View the merged data
+glimpse(p_ctax_emp_schools_hospitals)
+
+```
+
+```{r merging p_ctax_emp_schools and tt_hospitals  , warning=FALSE, message=FALSE}
+
+glimpse(p_ctax_emp_schools_hospitals)
+
+glimpse(school_lsoa)
+
+# Perform the left join
+final_dataset <- p_ctax_emp_schools_hospitals %>%
+  left_join(
+    school_lsoa, 
+    by = c("LSOA code" = "lsoa11cd_school_lsoa", "year" = "year_school_lsoa")
+  ) %>%
+  mutate(
+    merge_5 = case_when(
+      is.na(num_schools_school_lsoa) ~ 1,  # Left side only (no match found on the right)
+      is.na(`Local authority code`) ~ 2, # Right side only (shouldn't occur in left join)
+      TRUE ~ 3                          # Match found
+    )
+  )
+
+# Count observations for each merge category (all 68,319 observations from school_lsoa merged properly)
+merge_5_summary <- final_dataset %>%
+  count(merge_5)
+
+# Print the merge summary
+print(merge_5_summary)
+
+# View the merged data
+glimpse(final_dataset)
+
+```
+
+
+
+## Saving final dataset as csv file
+
+```{r saving_final_dataset, warning=FALSE, message=FALSE}
+
+glimpse(final_dataset)
+
+#My dataset is to heavy, I will just keep years 2014-2017 for general analysis and also 2017 to 2023 for time series descriptive analysis.
+final_dataset <- final_dataset %>%
+  filter(year >= 2014 & year <= 2023)
+
+glimpse(final_dataset)
+
+# Here we save the dataset
+write.csv(final_dataset, "C:/Bruno/Postulaciones/Postulaciones GE/Frontier Economics/Junior Data Scientist/Data/final_dataset.csv", row.names = FALSE)
+
+```
+
+## Appendix: All code in this assignment
+
+```{r ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE}
+# this chunk generates the complete code appendix. 
+# eval=FALSE tells R not to run (``evaluate'') the code here (it was already run before).
+```

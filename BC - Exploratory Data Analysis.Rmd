@@ -1,0 +1,298 @@
+---
+title: 'Frontier Economics: Interview task'
+author: 'Author: Bruno Chereque'
+date: "18/12/24"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE, echo=FALSE, message = FALSE, warning = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+if (!require("tidyverse")) install.packages("tidyverse")
+library(tidyverse)
+
+if (!require("sf")) install.packages("sf")
+library(sf)
+
+if (!require("tmap")) install.packages("tmap")
+library(tmap)
+
+if (!require("tmaptools")) install.packages("tmaptools")
+library(tmaptools)
+
+```
+
+# Exploratory Data Analysis:
+
+## Slide 1: Price trends plot
+
+```{r slide 1 plotting prices, warning=FALSE, message=FALSE}
+
+final_dataset <- read_csv("C:/Bruno/Postulaciones/Postulaciones GE/Frontier Economics/Junior Data Scientist/Data/final_dataset.csv")
+
+glimpse(final_dataset)
+
+
+# Clean the data and calculate annual mean price
+annual_mean_price <- final_dataset %>%
+  select(year, mean_price) %>%
+  drop_na() %>%
+  group_by(year) %>%
+  summarise(mean_price = mean(mean_price, na.rm = TRUE))
+
+print(annual_mean_price)
+
+# Updated plot with customized y-axis
+ggplot(annual_mean_price, aes(x = year, y = mean_price)) +
+  
+  # Add a blue line with a little thickness
+  geom_line(color = "blue", size = 1.5) +
+  
+  # Add points for better visibility
+  geom_point(color = "darkblue", size = 3) +
+  
+  # Add title, labels, and source
+  labs(
+    x = "Year",
+    y = "Mean Price (£)"
+  ) +
+  
+  # Use the classic theme
+  theme_classic() +
+  
+  # Customize the y-axis for the specified range and breaks
+  scale_y_continuous(
+    labels = scales::comma, 
+    limits = c(200000, 360000),
+    breaks = seq(200000, 360000, by = 40000)
+  ) +
+  
+  # Customize the title and add a panel grid for clarity
+  theme(
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text = element_text(size = 12, face = "bold"),
+    panel.grid.major = element_line(color = "grey80", linetype = "dotted")
+  )
+
+# Save the plot in high quality
+ggsave(
+  filename = "C:/Bruno/Postulaciones/Postulaciones GE/Frontier Economics/Junior Data Scientist/Data/annual_mean_price_plot.png",  # File name
+  plot = last_plot(),                      # Save the most recent plot
+  width = 10,                              # Width in inches
+  height = 6,                              # Height in inches
+  dpi = 600                                # Resolution in dots per inch
+)
+
+
+# Define starting and ending values and the number of years
+starting_value <- 218490.1
+ending_value <- 340810.5
+n <- 2023 - 2014
+
+# Calculate CAGR
+cagr <- ((ending_value / starting_value)^(1 / n)) - 1
+
+# Print CAGR as a percentage
+cagr_percentage <- cagr * 100
+cat("The Compound Annual Growth Rate (CAGR) is:", round(cagr_percentage, 2), "%\n")
+```
+## Slide 3: Mean price 2017 map
+
+```{r slide 3 map, warning=FALSE, message=FALSE}
+
+# Filter the dataset for 2017
+final_dataset_2017 <- final_dataset %>%
+  filter(year == 2017)
+
+# Download and load the shapefile:
+
+# Define the URL (direct link to download the data) and destination folder (working directory)
+url <- "https://open-geography-portalx-ons.hub.arcgis.com/api/download/v1/items/79fa1c80981b4e4eb218bbce1afc304b/shapefile?layers=0"
+
+destination_folder <- "C:/Bruno/Postulaciones/Postulaciones GE/Frontier Economics/Junior Data Scientist/Data" #This will be needed to change to the personal directory of the user, The folder is called "Data", and we will save all the dataframes here.
+
+# Define the zip and excel files with the correct names
+zip_file <- file.path(destination_folder, "/LLSOA_Dec_2021_PWC_for_England_and_Wales_2022_4975765757449378936.zip")
+
+sf_file <- file.path(destination_folder, "/LSOA_PopCentroids_EW_2021_V3.shp")
+
+# Create the folder if it doesn't exist
+if (!dir.exists(destination_folder)) {
+  dir.create(destination_folder, recursive = TRUE)
+}
+
+# Download the ZIP file from the ONS website
+download.file(url, zip_file, mode = "wb")
+
+# Unzip the folder in the "Data" folder
+unzip(zip_file, exdir = destination_folder)
+
+# Load the shape file
+shape_file <- read_sf(sf_file)
+
+# Verify CRS: OK EPSG:27700
+st_crs(shape_file)
+
+head(shape_file)
+
+# Perform a left join
+final_dataset_2017_map <- final_dataset_2017 %>%
+  left_join(
+    shape_file,
+    by = c("LSOA code" = "LSOA21CD")
+  ) 
+
+glimpse(final_dataset_2017_map)
+
+
+# Check if the dataset is already an sf object
+if (!inherits(final_dataset_2017_map, "sf")) {
+  final_dataset_2017_map <- st_as_sf(final_dataset_2017_map, crs = 27700)
+}
+
+# Plot the map
+
+map_prices2017 <- tm_shape(final_dataset_2017_map) +
+  tm_dots(
+    col = "mean_price", 
+    palette = "YlGnBu", 
+    title = "",  # Removes the legend title
+    style = "quantile",
+    labels = c("£22K–131K", "£131K–185K", "£185K–259K", "£259K–370K", "£370K–7M"),
+    legend.size = 2,  # Increases the size of the dots in the legend
+    size = 0.3  # Increases the size of the dots on the map
+  ) +
+  tm_layout(
+    main.title = NULL,  # Removes the main title
+    main.subtitle = NULL,  # Removes the subtitle if present
+    legend.text.size = 0.9,
+    legend.outside = TRUE,
+    compass.type = "arrow", 
+    compass.position = c("left", "top"),
+    scale.bar.position = c("left", "bottom"),
+    frame = FALSE,
+    outer.margins = c(0, 0, 0, 0)
+  )
+
+tmap_save(
+  tm = map_prices2017, 
+  filename = "C:/Bruno/Postulaciones/Postulaciones GE/Frontier Economics/Junior Data Scientist/Data/map_prices2017.png",
+  width = 12,
+  height = 8,
+  dpi = 500
+)
+
+map_prices2017
+
+```
+
+```{r slide 3 histogram + kernel, warning=FALSE, message=FALSE}
+
+# Create a simple histogram
+ggplot(final_dataset_2017_map, aes(x = mean_price)) +
+  geom_histogram(
+    bins = 30, 
+    fill = "skyblue", 
+    color = "black", 
+    alpha = 0.7
+  ) +
+  scale_x_continuous(
+    labels = scales::comma, 
+    limits = c(0, quantile(final_dataset_2017_map$mean_price, 0.95, na.rm = TRUE))
+  ) +
+  scale_y_continuous(
+    name = "Count"
+  ) +
+  labs(
+    x = "Mean House Price (£)"
+  ) +
+  theme_classic(base_size = 15)
+
+# Save the plot
+ggsave(
+  filename = "C:/Bruno/Postulaciones/Postulaciones GE/Frontier Economics/Junior Data Scientist/Data/histogram.png", 
+  plot = last_plot(), 
+  width = 8,  # Width in inches
+  height = 6, # Height in inches
+  dpi = 300   # Resolution
+)
+
+```
+
+## Slide 4: Visualising correlations
+
+```{r slide 4 scatters, warning=FALSE, message=FALSE}
+
+# Filter the dataset for 2014 <= year <= 2017
+final_dataset_filtered <- final_dataset %>%
+  filter(year >= 2014 & year <= 2017)
+
+# Compute correlation matrix
+correlation_matrix <- cor(final_dataset_filtered %>% select(where(is.numeric)), use = "complete.obs")
+
+# Extract correlations with mean_price
+corr_with_price <- correlation_matrix["mean_price", ]
+
+# Remove the correlation of `mean_price` with itself
+corr_with_price <- corr_with_price[names(corr_with_price) != "mean_price"]
+
+# Sort by correlation values
+corr_with_price_sorted <- sort(corr_with_price, decreasing = TRUE)
+
+# Get top 10 positively and negatively correlated variables
+top_10_positive <- head(corr_with_price_sorted, 10)
+top_10_negative <- tail(corr_with_price_sorted, 10)
+
+# Convert to data frame for ggplot
+positive_df <- data.frame(Variable = names(top_10_positive), Correlation = top_10_positive)
+negative_df <- data.frame(Variable = names(top_10_negative), Correlation = top_10_negative)
+
+# Plot top 10 positive correlations 
+positive_plot <- ggplot(positive_df, aes(x = reorder(Variable, Correlation), y = Correlation)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  coord_flip() +
+  labs(x = "Variables",
+       y = "Correlation") +
+  theme_classic() +
+  theme(axis.text.x = element_text(size = 12),   # Font size for x-axis text
+        axis.text.y = element_text(size = 12),   # Font size for y-axis text
+        axis.title.x = element_text(size = 14),  # Font size for x-axis label
+        axis.title.y = element_text(size = 14))  # Font size for y-axis label
+
+# Plot top 10 negative correlations with increased font size
+negative_plot <- ggplot(negative_df, aes(x = reorder(Variable, Correlation), y = Correlation)) +
+  geom_bar(stat = "identity", fill = "red") +
+  coord_flip() +
+  labs(x = "Variables",
+       y = "Correlation") +
+  theme_classic() +
+  theme(axis.text.x = element_text(size = 12),   # Font size for x-axis text
+        axis.text.y = element_text(size = 12),   # Font size for y-axis text
+        axis.title.x = element_text(size = 14),  # Font size for x-axis label
+        axis.title.y = element_text(size = 14))  # Font size for y-axis label
+
+positive_plot
+negative_plot
+
+# Define file paths for saving the plots
+positive_plot_path <- "C:/Bruno/Postulaciones/Postulaciones GE/Frontier Economics/Junior Data Scientist/Data/positive_correlations_plot.png"
+negative_plot_path <- "C:/Bruno/Postulaciones/Postulaciones GE/Frontier Economics/Junior Data Scientist/Data/negative_correlations_plot.png"
+
+# Save the positive correlations plot
+ggsave(filename = positive_plot_path, plot = positive_plot, width = 8, height = 6, dpi = 300)
+
+# Save the negative correlations plot
+ggsave(filename = negative_plot_path, plot = negative_plot, width = 8, height = 6, dpi = 300)
+
+```
+
+
+## Appendix: All code in this assignment
+
+```{r ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE}
+# this chunk generates the complete code appendix. 
+# eval=FALSE tells R not to run (``evaluate'') the code here (it was already run before).
+```
