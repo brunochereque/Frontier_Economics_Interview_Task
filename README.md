@@ -3,6 +3,7 @@ This repository contains the data, code, and analysis for investigating the driv
 
 # Repository Structure
 The repository is organized as follows:
+- BC - Interview Task Presentation.pdf: Slide deck with the Analysis of Property Prices.
 - BC - Download Cleaning Merging.Rmd: R Markdown file containing the code for downloading, cleaning, and merging datasets from multiple sources.
 - BC - Exploratory Data Analysis.Rmd: R Markdown file for performing exploratory data analysis, including visualizations and correlation analysis of variables.
 - BC - Clustering analysis.ipynb: Python notebook implementing clustering analysis using K-means and Principal Component Analysis (PCA) to segment properties based on key characteristics.
